@@ -2,7 +2,7 @@
 // @author 
 // @description
 // @dependencies: axios, crypto-js
-// @version 1.0.2
+// @version 1.0.3
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/短剧/短剧聚合.js
 
 /**
@@ -427,6 +427,13 @@ const md5 = function(str) {
  */
 const atob = function(str) {
     return Buffer.from(str, 'base64').toString('utf8');
+};
+
+/**
+ * 判断是否直链
+ */
+const isDirectPlayable = function(url) {
+    return !!(url && url.match(/\.(m3u8|mp4|flv|avi|mkv|ts)(\?|$)/i));
 };
 
 /**
@@ -1727,10 +1734,16 @@ async function play(params) {
             return { urls: urls, parse: 0 };
         }
         else if (flag.indexOf('甜圈短剧') !== -1) {
-            return {
-                urls: [{ name: '播放', url: 'https://mov.cenguigui.cn/duanju/api.php?video_id=' + playId + '&type=mp4' }],
-                parse: 0
-            };
+            const sniffResult = await OmniBox.sniffVideo('https://mov.cenguigui.cn/duanju/api.php?video_id=' + playId + '&type=mp4');
+        return {
+            urls: [{ name: '播放', url: sniffResult.url || playId }],
+            parse: 0,
+            header: sniffResult.header
+        };
+            // return {
+            //     urls: [{ name: '播放', url: 'https://mov.cenguigui.cn/duanju/api.php?video_id=' + playId + '&type=mp4' }],
+            //     parse: 0
+            // };
         }
         else if (flag.indexOf('锦鲤短剧') !== -1) {
             const targetUrl = playId.indexOf('auto=1') !== -1 ? playId : playId + '&auto=1';
@@ -1835,7 +1848,16 @@ async function play(params) {
             return { urls: [{ name: '播放', url: playId }], parse: 0 };
         }
         
-        return { urls: [{ name: '播放', url: playId }], parse: 0 };
+        if (isDirectPlayable(playId)) {
+            return { urls: [{ name: '播放', url: playId }], parse: 0 };
+        }
+
+        const sniffResult = await OmniBox.sniffVideo(playId);
+        return {
+            urls: [{ name: '播放', url: sniffResult.url || playId }],
+            parse: 0,
+            header: sniffResult.header
+        };
     } catch (e) {
         logError('播放解析失败', e);
         return { urls: [], parse: 0 };
