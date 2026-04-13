@@ -1,4 +1,5 @@
 // @name 88看球
+// @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/采集/88看球.js
 /**
  * 刮削：不支持
  * 弹幕：不支持
