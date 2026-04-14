@@ -1185,6 +1185,7 @@ async function play(params) {
 
             playResponse = {
                 urls: [{ name: '播放', url: playUrl }],
+                header:config.headers,
                 parse: 0
             };
         }
