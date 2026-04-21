@@ -1,8 +1,7 @@
 // @name DJ音乐[听] - OmniBox
-// @version 1.0.4
+// @version 1.0.6
 // @author https://github.com/hjdhnx/drpy-node/blob/main/spider/js/DJ%E9%9F%B3%E4%B9%90%5B%E5%90%AC%5D.js
 // @origin https://github.com/hjdhnx/drpy-node/blob/main/spider/js/DJ%E9%9F%B3%E4%B9%90%5B%E5%90%AC%5D.js
-// @indexs 1
 // @push 0
 // @dependencies cheerio
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/音乐/DJ音乐.js
@@ -236,8 +235,7 @@ async function play(params, context) {
     }
 
     if (music?.file) {
-      const base = new URL(playId, HOST);
-      const url = `${base.protocol}//mp4.djuu.com/${music.file}.m4a`;
+      const url = music.file;
       await OmniBox.log("info", `[play] hit music.file -> ${url}`);
       return {
         urls: [{ name: "播放", url }],
