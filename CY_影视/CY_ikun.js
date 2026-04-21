@@ -3,7 +3,7 @@
 // @description 分类逻辑：电影二级分类+其他一级分类，其他功能不变
 // @dependencies axios,cheerio
 // @version 1.0.0
-// @downloadURL https://github.com/caiya0501/OmniBox-Spider/blob/main/CY_%E5%BD%B1%E8%A7%86/CY_ikun.js
+// @downloadURL https://github.com/caiya0501/OmniBox-Spider/blob/main/CY_影视/CY_ikun.js
 
 const axios = require("axios");
 const https = require("https");
