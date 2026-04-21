@@ -4,6 +4,8 @@
 // @dependencies axios,cheerio
 // @version 1.0.0
 // @downloadURL https://github.com/caiya0501/OmniBox-Spider/edit/main/CY_%E5%BD%B1%E8%A7%86/CY_ikun.js
+
+const axios = require("axios");
 const OmniBox = require("omnibox_sdk");
 
 // ==================== 核心配置 ====================
