@@ -2,7 +2,7 @@
 // @author 
 // @description 分类逻辑：电影二级分类+其他一级分类，其他功能不变
 // @dependencies axios,cheerio
-// @version 1.0.0
+// @version 1.0.1
 // @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_ikun.js
 
 const axios = require("axios");
