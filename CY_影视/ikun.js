@@ -1,7 +1,8 @@
 // @name ikun资源-分类逻辑优化版
 // @author 
 // @description 分类逻辑：电影二级分类+其他一级分类，其他功能不变
-// @version 2.2.2
+// @version 0.0.0
+// @downloadURL https://github.com/caiya0501/OmniBox-Spider/edit/main/CY_%E5%BD%B1%E8%A7%86/ikun.js
 const OmniBox = require("omnibox_sdk");
 
 // ==================== 核心配置 ====================
