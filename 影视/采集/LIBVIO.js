@@ -2,7 +2,7 @@
 // @author 梦
 // @description 刮削：未接入，弹幕：未接入，嗅探：不需要（直链优先，支持网盘线路展开）
 // @dependencies
-// @version 1.3.3
+// @version 1.3.4
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/采集/LIBVIO.js
 
 const http = require("http");
@@ -11,8 +11,15 @@ const { URL } = require("url");
 const OmniBox = require("omnibox_sdk");
 const runner = require("spider_runner");
 
-const HOST = "https://www.libvios.com";
+const HOST_CANDIDATES = [
+    "https://www.libvios.com",
+    "https://libvio.run",
+    "https://www.libvio.mov",
+    "https://www.libhd.com",
+].map((item) => normalizeHost(item)).filter(Boolean);
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+let ACTIVE_HOST = HOST_CANDIDATES[0];
+
 const DEFAULT_PAGE_SIZE = 12;
 const DRIVE_TYPE_CONFIG = (process.env.DRIVE_TYPE_CONFIG || "quark;uc").split(";").map((t) => t.trim().toLowerCase()).filter(Boolean);
 const SOURCE_NAMES_CONFIG = (process.env.SOURCE_NAMES_CONFIG || "本地代理;服务端代理;直连").split(";").map((s) => s.trim()).filter(Boolean);
@@ -61,16 +68,37 @@ const SORT_OPTIONS = [
     { name: "评分", value: "score" }
 ];
 
-async function requestText(url, options = {}) {
-    const target = new URL(fixUrl(url));
-    const lib = target.protocol === "https:" ? https : http;
-    const headers = {
+function normalizeHost(url = "") {
+    const value = String(url || "").trim();
+    if (!value) return "";
+    const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    try {
+        const target = new URL(withProtocol);
+        return `${target.protocol}//${target.host}`;
+    } catch {
+        return withProtocol.replace(/\/+$/, "");
+    }
+}
+
+function getCurrentHost() {
+    return ACTIVE_HOST || HOST_CANDIDATES[0];
+}
+
+function buildHeadersForHost(host, extra = {}) {
+    return {
         "User-Agent": UA,
-        "Referer": `${HOST}/`,
-        "Origin": HOST,
+        "Referer": `${host}/`,
+        "Origin": host,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        ...(options.headers || {})
+        ...extra,
     };
+}
+
+async function requestTextAbsolute(url, options = {}) {
+    const target = new URL(url);
+    const lib = target.protocol === "https:" ? https : http;
+    const hostForHeaders = normalizeHost(options.hostForHeaders || `${target.protocol}//${target.host}`);
+    const headers = buildHeadersForHost(hostForHeaders, options.headers || {});
 
     return await new Promise((resolve, reject) => {
         const req = lib.request(target, {
@@ -97,6 +125,55 @@ async function requestText(url, options = {}) {
         req.end();
     });
 }
+
+async function probeHost(host) {
+    try {
+        await requestTextAbsolute(`${host}/`, { timeout: 8000, hostForHeaders: host });
+        return true;
+    } catch (error) {
+        logInfo("域名探测失败", { host, error: error.message });
+        return false;
+    }
+}
+
+async function ensureActiveHost(preferredHost = "") {
+    const preferred = normalizeHost(preferredHost);
+    const ordered = [preferred, getCurrentHost(), ...HOST_CANDIDATES].filter(Boolean).filter((item, idx, arr) => arr.indexOf(item) === idx);
+    for (const host of ordered) {
+        if (await probeHost(host)) {
+            if (ACTIVE_HOST !== host) {
+                logInfo("切换可用域名", { from: ACTIVE_HOST, to: host });
+            }
+            ACTIVE_HOST = host;
+            return ACTIVE_HOST;
+        }
+    }
+    throw new Error(`未找到可用域名: ${ordered.join(", ")}`);
+}
+
+async function requestText(url, options = {}) {
+    const raw = String(url || "").trim();
+    if (!raw) throw new Error("请求地址为空");
+
+    if (/^https?:\/\//i.test(raw)) {
+        return await requestTextAbsolute(raw, options);
+    }
+
+    const hosts = [getCurrentHost(), ...HOST_CANDIDATES].filter(Boolean).filter((item, idx, arr) => arr.indexOf(item) === idx);
+    let lastError = null;
+    for (const host of hosts) {
+        try {
+            await ensureActiveHost(host);
+            const absoluteUrl = raw.startsWith("/") ? `${ACTIVE_HOST}${raw}` : `${ACTIVE_HOST}/${raw}`;
+            return await requestTextAbsolute(absoluteUrl, { ...options, hostForHeaders: ACTIVE_HOST });
+        } catch (error) {
+            lastError = error;
+            logInfo("候选域名请求失败", { host, url: raw, error: error.message });
+        }
+    }
+    throw lastError || new Error(`请求失败: ${raw}`);
+}
+
 
 
 module.exports = { home, category, detail, search, play };
@@ -139,7 +216,8 @@ function fixUrl(url = "") {
     if (!url) return "";
     if (/^https?:\/\//i.test(url)) return url;
     if (url.startsWith("//")) return `https:${url}`;
-    return url.startsWith("/") ? `${HOST}${url}` : `${HOST}/${url}`;
+    const host = getCurrentHost();
+    return url.startsWith("/") ? `${host}${url}` : `${host}/${url}`;
 }
 
 function encodePlayId(payload) {
@@ -565,7 +643,7 @@ function emptyPage(page = 1) {
 
 async function home(params, context) {
     try {
-        logInfo("home 进入", { params, from: context?.from || "web" });
+        logInfo("home 进入", { params, host: getCurrentHost(), from: context?.from || "web" });
         const html = await fetchHtml("/");
         const list = parseVodList(html).slice(0, 24);
         const classes = CLASS_LIST.map((item) => ({ ...item }));
@@ -587,7 +665,7 @@ async function category(params, context) {
     const filters = params?.filters || {};
     try {
         const finalUrl = await resolveCategoryUrl(categoryId, page, filters);
-        logInfo("category 请求", { categoryId, page, filters, path: finalUrl.replace(HOST, ""), from: context?.from || "web" });
+        logInfo("category 请求", { categoryId, page, filters, host: getCurrentHost(), path: finalUrl.replace(getCurrentHost(), ""), from: context?.from || "web" });
         const html = await fetchHtml(finalUrl);
         const list = parseVodList(html);
         const hasNext = html.includes(`>${page + 1}<`) || html.includes(`-${page + 1}---`) || html.includes(`下一页`);
@@ -611,7 +689,7 @@ async function detail(params, context) {
     const videoId = String(params?.videoId || "").trim();
     if (!videoId) return { list: [] };
     try {
-        logInfo("detail 请求", { videoId, from: context?.from || "web" });
+        logInfo("detail 请求", { videoId, host: getCurrentHost(), from: context?.from || "web" });
         const html = await fetchHtml(videoId);
         const name = stripTags(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1] || "");
         const poster = fixUrl(html.match(/class="lazyload"[^>]*data-original="([^"]+)"/)?.[1] || html.match(/data-original="([^"]+)"/)?.[1] || "");
@@ -709,7 +787,7 @@ async function search(params, context) {
     if (!keyword) return emptyPage(page);
     try {
         const path = buildSearchPath(keyword, page);
-        logInfo("search 请求", { keyword, page, path, quick: params?.quick ? 1 : 0, from: context?.from || "web" });
+        logInfo("search 请求", { keyword, page, host: getCurrentHost(), path, quick: params?.quick ? 1 : 0, from: context?.from || "web" });
         const html = await fetchHtml(path);
         const list = parseVodList(html);
         const pagecount = list.length === DEFAULT_PAGE_SIZE ? page + 1 : page;
@@ -775,8 +853,8 @@ async function play(params, context) {
                 parse: 1,
                 flag: playFlag,
                 header: {
-                    Referer: `${HOST}/`,
-                    Origin: HOST,
+                    Referer: `${getCurrentHost()}/`,
+                    Origin: getCurrentHost(),
                     "User-Agent": UA
                 },
                 urls: [{ name: meta.name || "播放", url: playPageUrl }]
@@ -791,8 +869,8 @@ async function play(params, context) {
                 parse: 0,
                 flag: playFlag,
                 header: {
-                    Referer: `${HOST}/`,
-                    Origin: HOST,
+                    Referer: `${getCurrentHost()}/`,
+                    Origin: getCurrentHost(),
                     "User-Agent": UA
                 },
                 urls: [{ name: meta.name || "播放", url: realUrl }]
@@ -804,8 +882,8 @@ async function play(params, context) {
             parse: 1,
             flag: playFlag,
             header: {
-                Referer: `${HOST}/`,
-                Origin: HOST,
+                Referer: `${getCurrentHost()}/`,
+                Origin: getCurrentHost(),
                 "User-Agent": UA
             },
             urls: [{ name: meta.name || "播放", url: playPageUrl }]
