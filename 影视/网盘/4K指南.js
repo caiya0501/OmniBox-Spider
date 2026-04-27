@@ -1,7 +1,7 @@
 // @name 4K指南
 // @author 梦
-// @description 网盘资源站：https://4kzn.com ，支持首页、分类、详情、搜索与网盘播放
-// @version 1.1.1
+// @description 网盘资源站：https://4kzn.com ，支持首页、分类、详情、搜索、网盘播放、刮削、弹幕、播放记录
+// @version 1.2.1
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/4K指南.js
 // @dependencies cheerio
 
@@ -77,6 +77,77 @@ function formatFileSize(size) {
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(2)}MB`;
   if (n < 1024 ** 4) return `${(n / 1024 ** 3).toFixed(2)}GB`;
   return `${(n / 1024 ** 4).toFixed(2)}TB`;
+}
+
+function encodePlayMeta(meta) {
+  try {
+    return Buffer.from(JSON.stringify(meta || {}), "utf8").toString("base64");
+  } catch (_) {
+    return "";
+  }
+}
+
+function decodePlayMeta(meta) {
+  try {
+    return JSON.parse(Buffer.from(String(meta || ""), "base64").toString("utf8") || "{}");
+  } catch (_) {
+    return {};
+  }
+}
+
+function buildScrapedFileName(scrapeData, mapping, originalFileName) {
+  if (!mapping || mapping.episodeNumber === 0 || (mapping.confidence && mapping.confidence < 0.5)) {
+    return originalFileName;
+  }
+
+  if (!scrapeData || !scrapeData.title) {
+    return originalFileName;
+  }
+
+  if (scrapeData.type === "tv" || mapping.seasonNumber) {
+    const seasonNum = mapping.seasonNumber || 1;
+    const epNum = mapping.episodeNumber || 1;
+    const seasonAirYear = scrapeData.seasonAirYear || "";
+    let name = `${scrapeData.title}`;
+    if (seasonAirYear) name += `.${seasonAirYear}`;
+    name += `.S${String(seasonNum).padStart(2, "0")}E${String(epNum).padStart(2, "0")}`;
+    return name;
+  }
+
+  return scrapeData.title || originalFileName;
+}
+
+function normalizeEpisodeName(episodeName) {
+  if (!episodeName) return "";
+  return String(episodeName)
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/（[^）]*）/g, " ")
+    .replace(/第\s*([0-9一二三四五六七八九十百千零〇两]+)\s*[集话期]/g, "E$1")
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildFileNameForDanmu(vodName, episodeTitle) {
+  const title = cleanText(vodName || "");
+  const episode = normalizeEpisodeName(episodeTitle || "");
+  if (!title) return episode;
+  if (!episode || title.includes(episode)) return title;
+  return `${title} ${episode}`;
+}
+
+function buildPlayHistoryPayload({ sourceId, vodId, title, pic, episode, episodeName, episodeNumber }) {
+  if (!sourceId || !vodId) return null;
+  return {
+    vodId,
+    title: title || "",
+    pic: pic || "",
+    episode,
+    sourceId,
+    episodeNumber: typeof episodeNumber === "number" ? episodeNumber : undefined,
+    episodeName: episodeName || "",
+  };
 }
 
 function getBaseURLHost(context = {}) {
@@ -376,6 +447,7 @@ async function detail(params, context) {
     }
 
     const driveTypeCurrentIndexMap = {};
+    const filesForScraping = [];
     let playSources = [];
 
     for (const item of rawDriveInfos) {
@@ -399,10 +471,25 @@ async function detail(params, context) {
 
       const episodes = dedupeEpisodes(allVideoFiles.map((file) => {
         const sizeText = formatFileSize(file.size);
+        const episodeName = cleanText(String(file.file_name || "资源").replace(/\.[^.]+$/, "")) || "资源";
         const displayFileName = sizeText ? `[${sizeText}] ${file.file_name}` : file.file_name;
+        const playMeta = encodePlayMeta({
+          sid: detailUrl,
+          t: title,
+          p: pic,
+          e: episodeName,
+        });
+        const formattedFileId = `${shareURL}|${file.fid}`;
+        if (file.fid && !filesForScraping.some((item) => item.fid === formattedFileId)) {
+          filesForScraping.push({
+            file_name: episodeName,
+            fid: formattedFileId,
+            file_id: formattedFileId,
+          });
+        }
         return {
           name: displayFileName,
-          playId: `${shareURL}|${file.fid}`,
+          playId: playMeta ? `${shareURL}|${file.fid}|${playMeta}` : `${shareURL}|${file.fid}`,
         };
       }));
 
@@ -432,18 +519,61 @@ async function detail(params, context) {
       playSources = sortPlaySourcesByDriveOrder(playSources);
     }
 
-    await OmniBox.log("info", `[4K指南][detail] url=${detailUrl} title=${title} shareLinks=${shareLinks.length} lines=${playSources.length}`);
+    const vodItem = {
+      vod_id: detailUrl,
+      vod_name: title,
+      vod_pic: pic,
+      vod_content: desc,
+      vod_play_sources: playSources.length
+        ? playSources
+        : [{ name: "详情页", episodes: [{ name: "打开详情页", playId: `page|||${encodeURIComponent(detailUrl)}` }] }],
+    };
+
+    if (filesForScraping.length > 0) {
+      try {
+        await OmniBox.log("info", `[4K指南][detail] 开始统一刮削: vodId=${detailUrl}, files=${filesForScraping.length}`);
+        await OmniBox.processScraping(detailUrl, title || "", title || "", filesForScraping);
+        const metadata = await OmniBox.getScrapeMetadata(detailUrl);
+        const scrapeData = metadata?.scrapeData || null;
+        const videoMappings = Array.isArray(metadata?.videoMappings) ? metadata.videoMappings : [];
+
+        if (scrapeData || videoMappings.length > 0) {
+          for (const source of vodItem.vod_play_sources || []) {
+            for (const episode of source.episodes || []) {
+              const playIdParts = String(episode.playId || "").split("|");
+              const formattedId = `${String(playIdParts[0] || "")}|${String(playIdParts[1] || "")}`;
+              const matchedMapping = videoMappings.find((mapping) => mapping && mapping.fileId === formattedId);
+              if (matchedMapping && scrapeData) {
+                const newName = buildScrapedFileName(scrapeData, matchedMapping, String(episode.name || ""));
+                if (newName && newName !== episode.name) {
+                  episode.name = newName;
+                }
+              }
+            }
+          }
+
+          if (scrapeData) {
+            if (scrapeData.title) vodItem.vod_name = scrapeData.title;
+            if (scrapeData.posterPath) vodItem.vod_pic = `https://image.tmdb.org/t/p/w500${scrapeData.posterPath}`;
+            if (scrapeData.overview) vodItem.vod_content = scrapeData.overview;
+            if (scrapeData.releaseDate) vodItem.vod_year = String(scrapeData.releaseDate).slice(0, 4);
+            if (scrapeData.voteAverage) vodItem.vod_douban_score = Number(scrapeData.voteAverage).toFixed(1);
+          }
+          await OmniBox.log("info", `[4K指南][detail] 统一刮削完成: vodId=${detailUrl}, mappings=${videoMappings.length}, title=${vodItem.vod_name || title}`);
+        } else {
+          await OmniBox.log("info", `[4K指南][detail] 统一刮削无结果: vodId=${detailUrl}`);
+        }
+      } catch (error) {
+        await OmniBox.log("warn", `[4K指南][detail] 统一刮削失败: ${error.message}`);
+      }
+    } else {
+      await OmniBox.log("info", `[4K指南][detail] 跳过统一刮削: 未收集到可刮削文件`);
+    }
+
+    await OmniBox.log("info", `[4K指南][detail] url=${detailUrl} title=${vodItem.vod_name || title} shareLinks=${shareLinks.length} lines=${playSources.length}`);
 
     return {
-      list: [{
-        vod_id: detailUrl,
-        vod_name: title,
-        vod_pic: pic,
-        vod_content: desc,
-        vod_play_sources: playSources.length
-          ? playSources
-          : [{ name: "详情页", episodes: [{ name: "打开详情页", playId: `page|||${encodeURIComponent(detailUrl)}` }] }],
-      }],
+      list: [vodItem],
     };
   } catch (e) {
     await OmniBox.log("error", `[4K指南][detail] ${e.message}`);
@@ -503,6 +633,7 @@ async function play(params, context) {
     const idParts = playId.split("|");
     const shareURL = idParts[0] || "";
     let fileId = idParts[1] || "";
+    const playMeta = idParts.length >= 3 ? decodePlayMeta(idParts[2] || "") : {};
 
     if (!shareURL) {
       throw new Error("播放参数缺少分享链接");
@@ -524,7 +655,71 @@ async function play(params, context) {
       return { parse: 1, jx: 0, url: shareURL, urls: [{ name: "打开网盘", url: shareURL }], header, headers: header, flag: shareURL };
     }
 
-    const playInfo = await OmniBox.getDriveVideoPlayInfo(shareURL, fileId, routeType);
+    const metadataPromise = (async () => {
+      const result = {
+        danmakuList: [],
+        scrapeTitle: "",
+        scrapePic: "",
+        episodeNumber: null,
+        episodeName: playMeta.e || params.episodeName || "",
+      };
+
+      const vodId = String(playMeta.sid || params.vodId || params.videoId || "").trim();
+      if (!vodId) return result;
+
+      try {
+        const metadata = await OmniBox.getScrapeMetadata(vodId);
+        if (!metadata || !metadata.scrapeData || !Array.isArray(metadata.videoMappings)) {
+          await OmniBox.log("info", `[4K指南][play] 弹幕匹配跳过: metadata 不完整, vodId=${vodId}`);
+          return result;
+        }
+
+        const formattedFileId = `${shareURL}|${fileId}`;
+        const matchedMapping = metadata.videoMappings.find((mapping) => mapping && mapping.fileId === formattedFileId);
+        const scrapeData = metadata.scrapeData || {};
+        result.scrapeTitle = scrapeData.title || "";
+        if (scrapeData.posterPath) {
+          result.scrapePic = `https://image.tmdb.org/t/p/w500${scrapeData.posterPath}`;
+        }
+
+        if (!matchedMapping) {
+          await OmniBox.log("info", `[4K指南][play] 弹幕匹配未命中 mapping: ${formattedFileId}`);
+          return result;
+        }
+
+        if (matchedMapping.episodeNumber) {
+          result.episodeNumber = matchedMapping.episodeNumber;
+        }
+        if (matchedMapping.episodeName && !result.episodeName) {
+          result.episodeName = matchedMapping.episodeName;
+        }
+
+        const fileName = buildScrapedFileName(scrapeData, matchedMapping, result.episodeName || "") || buildFileNameForDanmu(scrapeData.title || playMeta.t || "", result.episodeName || "");
+        if (fileName) {
+          await OmniBox.log("info", `[4K指南][play] 生成 fileName 用于弹幕匹配: ${fileName}`);
+          const matchedDanmaku = await OmniBox.getDanmakuByFileName(fileName);
+          if (Array.isArray(matchedDanmaku) && matchedDanmaku.length > 0) {
+            result.danmakuList = matchedDanmaku;
+            await OmniBox.log("info", `[4K指南][play] 弹幕匹配成功, count=${matchedDanmaku.length}`);
+          }
+        }
+      } catch (error) {
+        await OmniBox.log("warn", `[4K指南][play] 弹幕匹配失败: ${error.message}`);
+      }
+
+      return result;
+    })();
+
+    const [playInfoResult, metadataResult] = await Promise.allSettled([
+      OmniBox.getDriveVideoPlayInfo(shareURL, fileId, routeType),
+      metadataPromise,
+    ]);
+
+    if (playInfoResult.status !== "fulfilled") {
+      throw new Error(playInfoResult.reason && playInfoResult.reason.message ? playInfoResult.reason.message : "网盘直链解析失败");
+    }
+
+    const playInfo = playInfoResult.value;
     if (!playInfo || !Array.isArray(playInfo.url) || !playInfo.url.length) {
       throw new Error("网盘直链解析结果为空");
     }
@@ -533,6 +728,44 @@ async function play(params, context) {
       name: item.name || "播放",
       url: item.url,
     }));
+
+    let danmakuList = Array.isArray(playInfo.danmaku) ? playInfo.danmaku : [];
+    let scrapeTitle = "";
+    let scrapePic = "";
+    let episodeNumber = null;
+    let episodeName = playMeta.e || params.episodeName || "";
+    if (metadataResult.status === "fulfilled" && metadataResult.value) {
+      danmakuList = metadataResult.value.danmakuList?.length ? metadataResult.value.danmakuList : danmakuList;
+      scrapeTitle = metadataResult.value.scrapeTitle || "";
+      scrapePic = metadataResult.value.scrapePic || "";
+      episodeNumber = metadataResult.value.episodeNumber ?? null;
+      episodeName = metadataResult.value.episodeName || episodeName;
+    } else if (metadataResult.status === "rejected") {
+      await OmniBox.log("warn", `[4K指南][play] 获取元数据失败(不影响播放): ${metadataResult.reason && metadataResult.reason.message ? metadataResult.reason.message : metadataResult.reason}`);
+    }
+
+    const historyPayload = buildPlayHistoryPayload({
+      sourceId: context?.sourceId,
+      vodId: String(playMeta.sid || params.vodId || params.videoId || shareURL),
+      title: params.title || scrapeTitle || playMeta.t || shareURL,
+      pic: params.pic || scrapePic || playMeta.p || "",
+      episode: playId,
+      episodeName,
+      episodeNumber,
+    });
+    if (historyPayload) {
+      OmniBox.addPlayHistory(historyPayload)
+        .then((added) => {
+          if (added) {
+            OmniBox.log("info", `[4K指南][play] 已添加观看记录: ${historyPayload.title}`);
+          } else {
+            OmniBox.log("info", `[4K指南][play] 观看记录已存在,跳过添加: ${historyPayload.title}`);
+          }
+        })
+        .catch((error) => {
+          OmniBox.log("warn", `[4K指南][play] 添加观看记录失败: ${error.message}`);
+        });
+    }
 
     const header = playInfo.header || {};
 
@@ -544,7 +777,7 @@ async function play(params, context) {
       header,
       parse: 0,
       jx: 0,
-      danmaku: playInfo.danmaku || [],
+      danmaku: danmakuList,
     };
   } catch (e) {
     await OmniBox.log("error", `[4K指南][play] ${e.message}`);
