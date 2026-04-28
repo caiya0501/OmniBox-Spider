@@ -2,7 +2,7 @@
 // @author
 // @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
 // @version 0.0.1
-// @downloadURL 本地部署无需下载
+// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_ikun.js
 
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
