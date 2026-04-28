@@ -1,10 +1,9 @@
-// @name IKUN影视+盘搜网盘融合完整版（多源显示修复）
+// @name IKUN影视+盘搜网盘融合完整版（线路优化版多源显示修复）
 // @author
+// @description 网盘线路按文件大小降序，名称含清晰度+大小，官方线路后置
 // @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
-// @version 0.0.2
+// @version 0.0.3
 // @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_ikun.js
-
-
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
 const axios = require("axios");
@@ -218,6 +217,28 @@ function sortResultsByDriveOrder(results = []) {
         const ib = map.get(tb)??Number.MAX_SAFE_INTEGER;
         return ia - ib;
     });
+}
+
+// ==================== 新增：文件信息提取工具 ====================
+function extractResolution(filename = "") {
+    const lower = String(filename).toLowerCase();
+    if (lower.includes("4k") || lower.includes("2160p")) return "  4K  ";
+    if (lower.includes("2k") || lower.includes("1440p")) return "  2K  ";
+    if (lower.includes("1080p") || lower.includes("1080")) return "1080P";
+    if (lower.includes("720p") || lower.includes("720")) return "720P";
+    return "其他";
+}
+
+function formatSizeShort(size = 0) {
+    if (!size || size <= 0) return "";
+    const units = ["B", "K", "M", "G", "T"];
+    let i = 0;
+    let s = size;
+    while (s >= 1024 && i < units.length - 1) {
+        s /= 1024;
+        i++;
+    }
+    return `${Math.round(s)}${units[i]}`;
 }
 
 // ==================== 盘搜API请求 ====================
@@ -490,7 +511,7 @@ function parsePlay(from, url) {
 }
 
 // ==================== 内部私有方法 ====================
-async function _getPanDetail(videoId, context) {
+async function _getPanDetail(videoId, context, sourceIndex) {
     try {
         const parts = videoId.split("|");
         const shareURL = parts[0]||"";
@@ -535,13 +556,22 @@ async function _getPanDetail(videoId, context) {
                 const meta = Buffer.from(JSON.stringify({t:keyword,e:fname}),"utf8").toString("base64");
                 return {
                     name:`[${formatFileSize(fsize)}] ${fname}`,
-                    playId:`${shareURL}|${fid}|${meta}`
+                    playId:`${shareURL}|${fid}|${meta}`,
+                    fileSize: fsize
                 };
             });
             if (eps.length) {
+                // 提取第一个文件的清晰度和大小
+                const firstFile = eps[0];
+                const resolution = extractResolution(firstFile.name);
+                const shortSize = formatSizeShort(firstFile.fileSize);
+                const driveShortName = formatDriveShortName(driveInfo.displayName);
+                // 生成线路名称：网盘X-网盘类型-清晰度-大小-代理方式
+                const sourceName = `☁️网盘${sourceIndex+1}-${driveShortName}-${resolution}-${shortSize}-${sn}`;
                 playSources.push({
-                    name:`☁️网盘-${driveInfo.displayName}-${sn}`,
-                    episodes:eps
+                    name: sourceName,
+                    episodes: eps,
+                    fileSize: firstFile.fileSize
                 });
             }
         }
@@ -667,19 +697,16 @@ async function detail(params, context) {
                 }
                 const panRes = await formatDriveSearchResults(filterData, videoName);
                 
-                // 🔥 核心修改：遍历所有盘搜源，合并所有线路
+                // 遍历所有盘搜源，合并所有线路
                 const allPanSources = [];
                 for (let i = 0; i < panRes.length; i++) {
                     const panItem = panRes[i];
                     try {
-                        const panDetail = await _getPanDetail(panItem.vod_id, context);
+                        // 传入sourceIndex生成带序号的线路名称
+                        const panDetail = await _getPanDetail(panItem.vod_id, context, i);
                         if (panDetail && panDetail.list.length > 0) {
                             const sources = panDetail.list[0].vod_play_sources || [];
-                            const indexedSources = sources.map(source => ({
-                                ...source,
-                                name: source.name.replace(/☁️网盘-/, `☁️网盘(${i+1})-`)
-                            }));
-                            allPanSources.push(...indexedSources);
+                            allPanSources.push(...sources);
                         }
                     } catch (e) {
                         OmniBox.log("warn", `解析第${i+1}个盘搜源失败: ${e.message}`);
@@ -692,7 +719,11 @@ async function detail(params, context) {
             }
         }
 
-        const allSrc = [...officialSrc, ...panSrc];
+        // 🔥 网盘线路按文件大小降序排序（大的在前）
+        panSrc.sort((a, b) => (b.fileSize || 0) - (a.fileSize || 0));
+        // 🔥 合并顺序：网盘线路在前，官方线路在后
+        const allSrc = [...panSrc, ...officialSrc];
+
         return {
             list:[{
                 vod_id:videoId,
