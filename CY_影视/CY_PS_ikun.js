@@ -1,8 +1,9 @@
-// @name IKUN影视+盘搜网盘融合完整版
+// @name IKUN影视+盘搜网盘融合完整版（多源显示修复）
 // @author
 // @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
-// @version 0.0.1
+// @version 0.0.2
 // @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_ikun.js
+
 
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
@@ -665,13 +666,30 @@ async function detail(params, context) {
                     }
                 }
                 const panRes = await formatDriveSearchResults(filterData, videoName);
-                if (panRes.length) {
-                    const panDetail = await _getPanDetail(panRes[0].vod_id, context);
-                    if (panDetail&&panDetail.list.length) {
-                        panSrc = panDetail.list[0].vod_play_sources||[];
+                
+                // 🔥 核心修改：遍历所有盘搜源，合并所有线路
+                const allPanSources = [];
+                for (let i = 0; i < panRes.length; i++) {
+                    const panItem = panRes[i];
+                    try {
+                        const panDetail = await _getPanDetail(panItem.vod_id, context);
+                        if (panDetail && panDetail.list.length > 0) {
+                            const sources = panDetail.list[0].vod_play_sources || [];
+                            const indexedSources = sources.map(source => ({
+                                ...source,
+                                name: source.name.replace(/☁️网盘-/, `☁️网盘(${i+1})-`)
+                            }));
+                            allPanSources.push(...indexedSources);
+                        }
+                    } catch (e) {
+                        OmniBox.log("warn", `解析第${i+1}个盘搜源失败: ${e.message}`);
+                        continue;
                     }
                 }
-            }catch(e){}
+                panSrc = allPanSources;
+            }catch(e){
+                OmniBox.log("warn", `网盘资源搜索失败: ${e.message}`);
+            }
         }
 
         const allSrc = [...officialSrc, ...panSrc];
