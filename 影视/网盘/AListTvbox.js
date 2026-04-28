@@ -1,8 +1,8 @@
 // @name AListTvbox
 // @author @sifanss
-// @description 必填参数：BASE_URL，XIAOYA_TOKEN。刮削：支持，弹幕：支持
+// @description 必填参数：BASE_URL，XIAOYA_TOKEN。刮削：支持，弹幕：支持，播放记录：支持
 // @dependencies: axios
-// @version 1.0.4
+// @version 1.1.1
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/AListTvbox.js
 
 // 引入 OmniBox SDK
@@ -25,7 +25,7 @@ const BASE_URL = process.env.XIAOYA_BASE_URL || "http://127.0.0.1:4567";
 // AListTvbox 安全订阅
 const ALIST_TVBOX_TOKEN = process.env.ALIST_TVBOX_TOKEN || process.env.XIAOYA_TOKEN || "";
 // 小雅接口路径（如有变化可通过环境变量覆盖）
-const VOD_PATH = `/vod1/${ALIST_TVBOX_TOKEN}` ;
+const VOD_PATH = `/vod1/${ALIST_TVBOX_TOKEN}`;
 const PLAY_PATH = `/play/${ALIST_TVBOX_TOKEN}`;
 
 // 是否启用本地代理（用于非 115/本地路由播放地址）
@@ -332,6 +332,21 @@ function preprocessTitle(title) {
     .replace(/[hH]\.?26[45]/g, " ")
     .replace(/BluRay|WEB-DL|HDR|REMUX/gi, " ")
     .replace(/\.mp4|\.mkv|\.avi|\.flv/gi, " ");
+}
+
+/**
+* 将中文数字转换为阿拉伯数字
+*/
+function chineseToArabic(cn) {
+  const map = { '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+  if (!isNaN(cn)) return parseInt(cn);
+  if (cn.length === 1) return map[cn] || cn;
+  if (cn.length === 2) {
+    if (cn[0] === '十') return 10 + map[cn[1]];
+    if (cn[1] === '十') return map[cn[0]] * 10;
+  }
+  if (cn.length === 3) return map[cn[0]] * 10 + map[cn[2]];
+  return cn;
 }
 
 function extractEpisode(title) {
@@ -662,10 +677,26 @@ async function detail(params, context) {
   }
 }
 
+function isValidUrl(str) {
+  // 空值直接返回 false
+  if (!str) return false;
+
+  try {
+    // 尝试用字符串构造 URL 对象
+    const url = new URL(str);
+
+    // 必须包含协议（http/https/ftp 等）才判定为有效 URL
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (e) {
+    // 解析失败说明不是合法 URL
+    return false;
+  }
+}
+
 /**
  * 播放
  */
-async function play(params) {
+async function play(params, context) {
   try {
     const playId = params.playId || params.id || "";
     const flag = params.flag || "";
@@ -688,8 +719,7 @@ async function play(params) {
 
     OmniBox.log("info", `获取播放地址: playId=${mainPlayId}, flag=${flag}`);
 
-    // 直接播放链接（m3u8/mp4 等）直接返回
-    if (/\.(m3u8|mp4|rmvb|avi|wmv|flv|mkv|webm|mov|m3u)(?!\w)/i.test(mainPlayId)) {
+    if (/\.(m3u8|mp4|rmvb|avi|wmv|flv|mkv|webm|mov|m3u|mp3)(?!\w)/i.test(mainPlayId)) {
       return {
         urls: [{ name: "播放", url: mainPlayId }],
         flag: flag,
@@ -698,24 +728,24 @@ async function play(params) {
       };
     }
 
-    const data = await requestXiaoya(PLAY_PATH, { id: mainPlayId });
-
-    if (!data || !data.url) {
-      throw new Error("播放接口返回为空");
+    if (isValidUrl(mainPlayId)) {
+      mainPlayId = mainPlayId.split('/').pop()
     }
 
-    const header = typeof data.header === "string" ? JSON.parse(data.header) : data.header || {};
-    const urls = buildPlayUrls(data.url);
-
-    // 弹幕匹配
-    let danmakuList = [];
-    let scrapeTitle = "";
-    let scrapePic = "";
-    try {
+    const metadataPromise = (async () => {
+      const result = {
+        danmakuList: [],
+        scrapeTitle: "",
+        scrapePic: "",
+        episodeNumber: null,
+        episodeName: originalEpisodeName || params.episodeName || "",
+      };
       const vodId = params.vodId || "";
-      if (vodId) {
-          const metadata = await OmniBox.getScrapeMetadata(vodId);
-          if (metadata && metadata.scrapeData && metadata.videoMappings) {
+      if (!vodId) return result;
+
+      try {
+        const metadata = await OmniBox.getScrapeMetadata(vodId);
+        if (metadata && metadata.scrapeData && metadata.videoMappings) {
           const formattedFileId = `${vodId}|${mainPlayId}`;
           let matchedMapping = null;
           for (const mapping of metadata.videoMappings) {
@@ -726,13 +756,17 @@ async function play(params) {
           }
 
           if (metadata.scrapeData) {
-            scrapeTitle = metadata.scrapeData.title || "";
+            result.scrapeTitle = metadata.scrapeData.title || "";
             if (metadata.scrapeData.posterPath) {
-              scrapePic = `https://image.tmdb.org/t/p/w500${metadata.scrapeData.posterPath}`;
+              result.scrapePic = `https://image.tmdb.org/t/p/w500${metadata.scrapeData.posterPath}`;
             }
           }
 
           if (matchedMapping && metadata.scrapeData) {
+            result.episodeNumber = matchedMapping.episodeNumber ?? null;
+            if (matchedMapping.episodeName && !result.episodeName) {
+              result.episodeName = matchedMapping.episodeName;
+            }
             const scrapeData = metadata.scrapeData;
             let fileName = "";
             const scrapeType = metadata.scrapeType || "";
@@ -748,13 +782,42 @@ async function play(params) {
 
             if (fileName) {
               OmniBox.log("info", `生成fileName用于弹幕匹配: ${fileName}`);
-              danmakuList = await OmniBox.getDanmakuByFileName(fileName);
+              result.danmakuList = await OmniBox.getDanmakuByFileName(fileName);
             }
           }
         }
+      } catch (error) {
+        OmniBox.log("warn", `弹幕匹配失败: ${error.message}`);
       }
-    } catch (error) {
-      OmniBox.log("warn", `弹幕匹配失败: ${error.message}`);
+
+      return result;
+    })();
+
+    const [playResult, metadataResult] = await Promise.allSettled([
+      requestXiaoya(PLAY_PATH, { id: mainPlayId }),
+      metadataPromise,
+    ]);
+    if (playResult.status !== "fulfilled") {
+      throw playResult.reason || new Error("获取播放地址失败");
+    }
+
+    const data = playResult.value;
+    const urls = buildPlayUrls(data.url);
+    const header = typeof data.header === "string" ? JSON.parse(data.header) : data.header || {};
+
+    OmniBox.log("info", `urls:${JSON.stringify(urls)}`)
+
+    let danmakuList = [];
+    let scrapeTitle = "";
+    let scrapePic = "";
+    let episodeNumber = null;
+    let finalEpisodeName = originalEpisodeName || params.episodeName || "";
+    if (metadataResult.status === "fulfilled" && metadataResult.value) {
+      danmakuList = metadataResult.value.danmakuList || [];
+      scrapeTitle = metadataResult.value.scrapeTitle || "";
+      scrapePic = metadataResult.value.scrapePic || "";
+      episodeNumber = metadataResult.value.episodeNumber ?? null;
+      finalEpisodeName = metadataResult.value.episodeName || finalEpisodeName;
     }
 
     if (!danmakuList || danmakuList.length === 0) {
@@ -771,6 +834,38 @@ async function play(params) {
           OmniBox.log("warn", `兜底弹幕匹配失败: ${error.message}`);
         }
       }
+    }
+
+    try {
+      const sourceId = context?.sourceId;
+      const titleForHistory = params.title || scrapeTitle || originalTitle || mainPlayId;
+      const picForHistory = params.pic || scrapePic || "";
+      const vodIdForHistory = String(params.vodId || params.videoId || originalTitle || mainPlayId);
+      if (sourceId) {
+        OmniBox.addPlayHistory({
+          vodId: vodIdForHistory,
+          title: titleForHistory,
+          pic: picForHistory,
+          episode: playId,
+          sourceId,
+          episodeNumber,
+          episodeName: finalEpisodeName,
+        })
+          .then((added) => {
+            if (added) {
+              OmniBox.log("info", `已添加观看记录: ${titleForHistory}`);
+            } else {
+              OmniBox.log("info", `观看记录已存在,跳过添加: ${titleForHistory}`);
+            }
+          })
+          .catch((error) => {
+            OmniBox.log("warn", `添加观看记录失败: ${error.message}`);
+          });
+      } else {
+        OmniBox.log("info", `跳过观看记录: sourceId 缺失, title=${titleForHistory}`);
+      }
+    } catch (error) {
+      OmniBox.log("warn", `观看记录预处理失败: ${error.message}`);
     }
 
     return {
