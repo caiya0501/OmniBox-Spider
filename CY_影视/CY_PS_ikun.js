@@ -2,7 +2,7 @@
 // @author
 // @description 网盘线路按文件大小降序，名称含清晰度+大小，官方线路后置
 // @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
-// @version 0.0.3
+// @version 0.0.4
 // @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_ikun.js
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
@@ -337,7 +337,7 @@ async function formatDriveSearchResults(data, keyword) {
     for (const [driveType, list] of Object.entries(merged)) {
         if (!Array.isArray(list)) continue;
         for (const item of list) {
-            const shareURL = String(item.url||"URL||");
+            const shareURL = String(item.url||"");
             const note = String(item.note||"");
             const images = item.images||[];
             const dt = String(item.datetime||"");
@@ -586,11 +586,6 @@ async function _panPlay(params, context) {
 
     let mainPlayId = playId;
     let metaPart = "";
-    if (playId.includes("|||")) {
-        const sp = playId.split("|||");
-        mainPlayId = sp[0]||"";
-        metaPart = sp[1]||"";
-    }
     const parts = mainPlayId.split("|");
     if (parts.length < 2) throw new Error("参数格式错误");
     const shareURL = parts[0]||"";
