@@ -2,7 +2,7 @@
 // @author lampon
 // @description
 // @dependencies axios
-// @version 1.1.8
+// @version 1.1.10
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/影巢.js
 
 const OmniBox = require("omnibox_sdk");
@@ -53,6 +53,11 @@ const HDHIVE_UNLOCK_RATE_LIMIT_ENABLED = String(process.env.HDHIVE_UNLOCK_RATE_L
 const HDHIVE_UNLOCK_RATE_LIMIT_WINDOW_MS = Number(process.env.HDHIVE_UNLOCK_RATE_LIMIT_WINDOW_MS || 60 * 1000);
 const HDHIVE_UNLOCK_RATE_LIMIT_MAX_CALLS = Number(process.env.HDHIVE_UNLOCK_RATE_LIMIT_MAX_CALLS || 3);
 const HDHIVE_UNLOCK_RATE_LIMIT_CACHE_KEY = process.env.HDHIVE_UNLOCK_RATE_LIMIT_CACHE_KEY || "yingchao:hdhive:unlock-rate-limit";
+// HDHive 任意接口 429 冷却配置（全局接口级别）
+const HDHIVE_API_COOLDOWN_CACHE_KEY = process.env.HDHIVE_API_COOLDOWN_CACHE_KEY || "yingchao:hdhive:api-cooldown";
+const HDHIVE_API_COOLDOWN_DEFAULT_SECONDS = Number(process.env.HDHIVE_API_COOLDOWN_DEFAULT_SECONDS || 300);
+const HDHIVE_RESOURCES_CACHE_PREFIX = process.env.HDHIVE_RESOURCES_CACHE_PREFIX || "yingchao:hdhive:resources";
+const HDHIVE_RESOURCES_CACHE_TTL_SECONDS = Number(process.env.HDHIVE_RESOURCES_CACHE_TTL_SECONDS || 300);
 // 读取环境变量：支持多个网盘类型，用分号分割；仅这些网盘类型启用多线路
 const DRIVE_TYPE_CONFIG = (process.env.DRIVE_TYPE_CONFIG || "quark;uc")
   .split(";")
@@ -692,9 +697,194 @@ async function markHDHiveRateLimitHit() {
   return next;
 }
 
+function toPositiveInt(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
+
+async function getHDHiveApiCooldownState() {
+  try {
+    const raw = await OmniBox.getCache(HDHIVE_API_COOLDOWN_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const until = Number(parsed?.until || 0);
+    if (!until || until <= Date.now()) {
+      try {
+        await OmniBox.deleteCache(HDHIVE_API_COOLDOWN_CACHE_KEY);
+      } catch (_) {
+        // ignore
+      }
+      return null;
+    }
+    return {
+      until,
+      retryAfterSeconds: toPositiveInt(parsed?.retryAfterSeconds, Math.ceil((until - Date.now()) / 1000)),
+      path: safeString(parsed?.path),
+      method: safeString(parsed?.method || "GET") || "GET",
+      scope: safeString(parsed?.scope),
+      code: safeString(parsed?.code),
+      message: safeString(parsed?.message),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function setHDHiveApiCooldown(info = {}) {
+  const retryAfterSeconds = Math.max(
+    1,
+    toPositiveInt(info?.retryAfterSeconds, HDHIVE_API_COOLDOWN_DEFAULT_SECONDS),
+  );
+  const until = Date.now() + retryAfterSeconds * 1000;
+  const payload = {
+    until,
+    retryAfterSeconds,
+    path: safeString(info?.path),
+    method: safeString(info?.method || "GET") || "GET",
+    scope: safeString(info?.scope),
+    code: safeString(info?.code),
+    message: safeString(info?.message),
+  };
+  try {
+    await OmniBox.setCache(
+      HDHIVE_API_COOLDOWN_CACHE_KEY,
+      JSON.stringify(payload),
+      retryAfterSeconds,
+    );
+  } catch (_) {
+    // ignore
+  }
+  return payload;
+}
+
+async function clearHDHiveApiCooldown() {
+  try {
+    await OmniBox.deleteCache(HDHIVE_API_COOLDOWN_CACHE_KEY);
+  } catch (_) {
+    // ignore
+  }
+}
+
+function buildHDHiveCooldownMessage(state, fallbackPath = "") {
+  const remainSeconds = Math.max(
+    1,
+    toPositiveInt(
+      state?.retryAfterSeconds,
+      Math.ceil((Number(state?.until || 0) - Date.now()) / 1000),
+    ),
+  );
+  const scopeLabel = safeString(state?.scope) || "接口";
+  const message = safeString(state?.message) || "HDHive 接口触发 429 冷却";
+  const pathText = safeString(state?.path || fallbackPath);
+  return `${message}，限制对象=${scopeLabel}，Retry-After=${remainSeconds}s${pathText ? `，跳过 ${pathText}` : ""}`;
+}
+
+async function buildHDHiveRateLimitedResult(state, fallbackPath = "") {
+  const message = buildHDHiveCooldownMessage(state, fallbackPath);
+  await OmniBox.log("warn", message);
+  return {
+    success: false,
+    data: null,
+    message,
+    code: safeString(state?.code) || "429",
+    rateLimited: true,
+    retryAfterSeconds: Math.max(
+      1,
+      toPositiveInt(
+        state?.retryAfterSeconds,
+        Math.ceil((Number(state?.until || 0) - Date.now()) / 1000),
+      ),
+    ),
+    limitScope: safeString(state?.scope),
+  };
+}
+
+function buildHDHiveResourcesCacheKey(mediaType, tmdbId) {
+  return `${HDHIVE_RESOURCES_CACHE_PREFIX}:${safeString(mediaType).toLowerCase()}:${safeString(tmdbId)}`;
+}
+
+async function getHDHiveResourcesCached(mediaType, tmdbId) {
+  const normalizedMediaType = safeString(mediaType).toLowerCase();
+  const normalizedTmdbId = safeString(tmdbId);
+  if (!normalizedMediaType || !normalizedTmdbId) {
+    throw new Error("HDHive resources 缓存参数不完整");
+  }
+
+  const cacheKey = buildHDHiveResourcesCacheKey(
+    normalizedMediaType,
+    normalizedTmdbId,
+  );
+
+  try {
+    const raw = await OmniBox.getCache(cacheKey);
+    if (raw) {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const resources = getArray(parsed?.data);
+      const meta = parsed?.meta && typeof parsed.meta === "object" ? parsed.meta : {};
+      await OmniBox.log(
+        "info",
+        `HDHive resources 缓存命中: mediaType=${normalizedMediaType} tmdbId=${normalizedTmdbId} count=${resources.length}`,
+      );
+      return {
+        success: true,
+        data: resources,
+        meta,
+        cached: true,
+      };
+    }
+  } catch (error) {
+    await OmniBox.log(
+      "warn",
+      `HDHive resources 读缓存失败: mediaType=${normalizedMediaType} tmdbId=${normalizedTmdbId} error=${error.message}`,
+    );
+  }
+
+  const resp = await requestHDHive(
+    `/resources/${normalizedMediaType}/${normalizedTmdbId}`,
+    "GET",
+  );
+
+  if (resp?.rateLimited) return resp;
+
+  const payload = {
+    data: getArray(resp?.data),
+    meta: resp?.meta && typeof resp.meta === "object" ? resp.meta : {},
+  };
+
+  try {
+    await OmniBox.setCache(
+      cacheKey,
+      JSON.stringify(payload),
+      Math.max(1, toPositiveInt(HDHIVE_RESOURCES_CACHE_TTL_SECONDS, 300)),
+    );
+    await OmniBox.log(
+      "info",
+      `HDHive resources 已写缓存: mediaType=${normalizedMediaType} tmdbId=${normalizedTmdbId} count=${payload.data.length}`,
+    );
+  } catch (error) {
+    await OmniBox.log(
+      "warn",
+      `HDHive resources 写缓存失败: mediaType=${normalizedMediaType} tmdbId=${normalizedTmdbId} error=${error.message}`,
+    );
+  }
+
+  return {
+    success: true,
+    data: payload.data,
+    meta: payload.meta,
+    cached: false,
+  };
+}
+
 async function requestHDHive(path, method = "GET", bodyObj = null) {
   if (!HDHIVE_API_KEY) {
     throw new Error("HDHive API Key 未配置：请设置 HDHIVE_API_KEY");
+  }
+
+  const cooldownState = await getHDHiveApiCooldownState();
+  if (cooldownState) {
+    return buildHDHiveRateLimitedResult(cooldownState, path);
   }
 
   if (path === "/resources/unlock" && HDHIVE_UNLOCK_RATE_LIMIT_ENABLED) {
@@ -800,6 +990,34 @@ async function requestHDHive(path, method = "GET", bodyObj = null) {
     );
     throw new Error(`HDHive JSON 解析失败: ${e.message}`);
   }
+
+  if (statusCode === 429) {
+    const retryAfterHeader =
+      responseHeaders["retry-after"] || responseHeaders["Retry-After"];
+    const retryAfterBody = data?.retry_after_seconds;
+    const retryAfterSeconds = Math.max(
+      1,
+      toPositiveInt(retryAfterHeader, toPositiveInt(retryAfterBody, HDHIVE_API_COOLDOWN_DEFAULT_SECONDS)),
+    );
+    const limitScope = safeString(data?.limit_scope_label || data?.limit_scope || "");
+    const code = safeString(data?.code || "429");
+    const message = safeString(data?.message || data?.description || "HDHive 接口触发 429");
+    const cooldown = await setHDHiveApiCooldown({
+      retryAfterSeconds,
+      path,
+      method,
+      scope: limitScope,
+      code,
+      message,
+    });
+    await OmniBox.log(
+      "warn",
+      `HDHive 429 冷却已写入: path=${path} retryAfter=${retryAfterSeconds}s scope=${limitScope || "unknown"} code=${code}`,
+    );
+    return buildHDHiveRateLimitedResult(cooldown, path);
+  }
+
+  await clearHDHiveApiCooldown();
 
   if (statusCode !== 200) {
     throw new Error(`HDHive HTTP ${statusCode}`);
@@ -1322,10 +1540,22 @@ async function category(params, context) {
         };
       }
 
-      const hData = await requestHDHive(
-        `/resources/${panFolderInfo.mediaType}/${panFolderInfo.tmdbId}`,
-        "GET",
+      const hData = await getHDHiveResourcesCached(
+        panFolderInfo.mediaType,
+        panFolderInfo.tmdbId,
       );
+      if (hData?.rateLimited) {
+        await OmniBox.log(
+          "warn",
+          `tmdb.js category(HDHive-PanItems) 被限流短路: categoryId=${categoryId}`,
+        );
+        return {
+          page: 1,
+          pagecount: 1,
+          total: 0,
+          list: [],
+        };
+      }
       let resources = getArray(hData?.data).filter(
         (it) => normalizePanType(it?.pan_type) === panFolderInfo.panType,
       );
@@ -1420,10 +1650,22 @@ async function category(params, context) {
       }
 
       const hdhiveType = folderInfo.mediaType === "movie" ? "movie" : "tv";
-      const hData = await requestHDHive(
-        `/resources/${hdhiveType}/${folderInfo.tmdbId}`,
-        "GET",
+      const hData = await getHDHiveResourcesCached(
+        hdhiveType,
+        folderInfo.tmdbId,
       );
+      if (hData?.rateLimited) {
+        await OmniBox.log(
+          "warn",
+          `tmdb.js category(HDHive-PanFolders) 被限流短路: categoryId=${categoryId}`,
+        );
+        return {
+          page: 1,
+          pagecount: 1,
+          total: 0,
+          list: [],
+        };
+      }
       const resources = getArray(hData?.data);
       const total = asInt(hData?.meta?.total, resources.length);
 
