@@ -23,7 +23,7 @@ const EXTERNAL_SERVER_PROXY_ENABLED = String(process.env.EXTERNAL_SERVER_PROXY_E
 const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "quark;baidu;a139;a189;a123;a115;xunlei;ali;uc").map(s => s.toLowerCase());
 const PANSOU_CACHE_EX_SECONDS = Number(process.env.PANSOU_CACHE_EX_SECONDS || 43200);
 
-const SITE_API = "https://apilj.com/api.php/provide";
+const SITE_API = "https://apilj.com/api.php/provide/vod";
 const BASE_DOMAIN = "https://apilj.com";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
