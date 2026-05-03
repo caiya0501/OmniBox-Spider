@@ -1,9 +1,8 @@
-// @name IKUN影视+盘搜网盘融合完整版（线路优化版多源显示修复）
+// @name TV-金鹰采集网
 // @author
-// @description 网盘线路按文件大小降序，名称含清晰度+大小，官方线路后置
 // @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
-// @version 0.0.4
-// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_ikun.js
+// @version 0.0.1
+// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_%E9%87%91%E9%B9%B0%E9%87%87%E9%9B%86%E7%BD%91.js
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
 const axios = require("axios");
@@ -19,13 +18,13 @@ const PANSOU_FILTER = process.env.PANSOU_FILTER || JSON.stringify({ "include": [
 const PANCHECK_ENABLED = String(process.env.PANCHECK_ENABLED || "1") === "1";
 const PANCHECK_PLATFORMS = process.env.PANCHECK_PLATFORMS || "quark,baidu,uc,pan123,tianyi,cmcc";
 const DRIVE_TYPE_CONFIG = splitConfigList(process.env.DRIVE_TYPE_CONFIG || "quark;uc");
-const SOURCE_NAMES_CONFIG = splitConfigList(process.env.SOURCE_NAMES_CONFIG || "本地代理;服务端代理;直连");
+const SOURCE_NAMES_CONFIG = splitConfigList(process.env.SOURCE_NAMES_CONFIG || "");
 const EXTERNAL_SERVER_PROXY_ENABLED = String(process.env.EXTERNAL_SERVER_PROXY_ENABLED || "false").toLowerCase() === "true";
 const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "quark;baidu;a139;a189;a123;a115;xunlei;ali;uc").map(s => s.toLowerCase());
 const PANSOU_CACHE_EX_SECONDS = Number(process.env.PANSOU_CACHE_EX_SECONDS || 43200);
 
-const SITE_API = "https://ikunzyapi.com/api.php/provide/vod";
-const BASE_DOMAIN = "https://ikunzyapi.com";
+const SITE_API = "https://jyzyapi.com/provide/vod";
+const BASE_DOMAIN = "https://jyzyapi.com";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
 
@@ -41,7 +40,7 @@ const PIC_CACHE = new Map();
 const USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh, Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.0.0 Safari/537.36"
 ];
 
@@ -573,12 +572,10 @@ async function _getPanDetail(videoId, context, sourceIndex) {
                 };
             });
             if (eps.length) {
-                // 提取第一个文件的清晰度和大小
                 const firstFile = eps[0];
                 const resolution = extractResolution(firstFile.name);
                 const shortSize = formatSizeShort(firstFile.fileSize);
                 const driveShortName = formatDriveShortName(driveInfo.displayName);
-                // 生成线路名称：网盘X-网盘类型-清晰度-大小-代理方式
                 const sourceName = `☁️网盘${sourceIndex+1}-${driveShortName}-${resolution}-${shortSize}-${sn}`;
                 playSources.push({
                     name: sourceName,
@@ -703,13 +700,11 @@ async function detail(params, context) {
                     }
                 }
                 const panRes = await formatDriveSearchResults(filterData, videoName);
-                
-                // 遍历所有盘搜源，合并所有线路
+
                 const allPanSources = [];
                 for (let i = 0; i < panRes.length; i++) {
                     const panItem = panRes[i];
                     try {
-                        // 传入sourceIndex生成带序号的线路名称
                         const panDetail = await _getPanDetail(panItem.vod_id, context, i);
                         if (panDetail && panDetail.list.length > 0) {
                             const sources = panDetail.list[0].vod_play_sources || [];
@@ -726,9 +721,7 @@ async function detail(params, context) {
             }
         }
 
-        // 🔥 网盘线路按文件大小降序排序（大的在前）
         panSrc.sort((a, b) => (b.fileSize || 0) - (a.fileSize || 0));
-        // 🔥 合并顺序：网盘线路在前，官方线路在后
         const allSrc = [...panSrc, ...officialSrc];
 
         return {

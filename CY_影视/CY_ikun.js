@@ -42,6 +42,10 @@ const SITE_API = "https://ikunzyapi.com/api.php/provide/vod";
 const BASE_DOMAIN = "https://ikunzyapi.com";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
+
+// ============== 核心：定义需要优先排在前面的电影分类（可自行增删） ==============
+const MOVIE_PRIORITY = process.env.MOVIE_PRIORITY || "动作片,惊悚片,科幻片,喜剧片,爱情片,恐怖片,悬疑片,冒险片,动画电影";
+const MOVIE_PRIORITY_TYPES = MOVIE_PRIORITY.split(',');
 // ==================== 配置结束 ====================
 
 // 全局分类树
@@ -123,9 +127,17 @@ async function buildCategoryList() {
         ALL_CATEGORIES = [];
         CATEGORY_TREE = {};
         
-        // 电影分类：二级子分类直接平铺展示
+        // 电影分类：二级子分类直接平铺展示，并按优先级排序
         if (movieCategory) {
-            const movieChildren = categoryMap.get(movieCategory.type_id) || [];
+            let movieChildren = categoryMap.get(movieCategory.type_id) || [];
+            // ============== 关键：给电影子分类排序（优先级分类靠前） ==============
+            movieChildren.sort((a, b) => {
+                const isAPriority = MOVIE_PRIORITY_TYPES.includes(a.type_name);
+                const isBPriority = MOVIE_PRIORITY_TYPES.includes(b.type_name);
+                if (isAPriority && !isBPriority) return -1;
+                if (!isAPriority && isBPriority) return 1;
+                return 0;
+            });
             ALL_CATEGORIES.push(...movieChildren);
         }
         

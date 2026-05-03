@@ -1,15 +1,14 @@
-// @name IKUN影视+盘搜网盘融合完整版（线路优化版多源显示修复）
+// @name TV-1080+盘搜网盘融合完整版（线路优化版多源显示修复）
 // @author
 // @description 网盘线路按文件大小降序，名称含清晰度+大小，官方线路后置
-// @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
-// @version 0.0.4
-// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_ikun.js
+// @description TV-1080接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
+// @version 0.0.1
+// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_TV-1080.js
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
 const axios = require("axios");
 const https = require("https");
 
-// ==================== 环境变量&固定配置 ====================
 const PANSOU_API = process.env.PANSOU_API || "http://192.168.31.22:4080/";
 const PANCHECK_API = process.env.PANCHECK_API || "http://192.168.31.22:6080/";
 const PANSOU_CHANNELS = process.env.PANSOU_CHANNELS || "";
@@ -19,13 +18,13 @@ const PANSOU_FILTER = process.env.PANSOU_FILTER || JSON.stringify({ "include": [
 const PANCHECK_ENABLED = String(process.env.PANCHECK_ENABLED || "1") === "1";
 const PANCHECK_PLATFORMS = process.env.PANCHECK_PLATFORMS || "quark,baidu,uc,pan123,tianyi,cmcc";
 const DRIVE_TYPE_CONFIG = splitConfigList(process.env.DRIVE_TYPE_CONFIG || "quark;uc");
-const SOURCE_NAMES_CONFIG = splitConfigList(process.env.SOURCE_NAMES_CONFIG || "本地代理;服务端代理;直连");
+const SOURCE_NAMES_CONFIG = splitConfigList(process.env.SOURCE_NAMES_CONFIG || "");
 const EXTERNAL_SERVER_PROXY_ENABLED = String(process.env.EXTERNAL_SERVER_PROXY_ENABLED || "false").toLowerCase() === "true";
 const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "quark;baidu;a139;a189;a123;a115;xunlei;ali;uc").map(s => s.toLowerCase());
 const PANSOU_CACHE_EX_SECONDS = Number(process.env.PANSOU_CACHE_EX_SECONDS || 43200);
 
-const SITE_API = "https://ikunzyapi.com/api.php/provide/vod";
-const BASE_DOMAIN = "https://ikunzyapi.com";
+const SITE_API = "https://api.1080zyku.com/inc/api_mac10.php";
+const BASE_DOMAIN = "https://api.1080zyku.com";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
 
@@ -33,7 +32,6 @@ const REQUEST_DELAY = 500;
 const MOVIE_PRIORITY = process.env.MOVIE_PRIORITY || "动作片,惊悚片,科幻片,喜剧片,爱情片,恐怖片,悬疑片,冒险片,动画电影";
 const MOVIE_PRIORITY_TYPES = MOVIE_PRIORITY.split(',');
 
-// ==================== 全局变量 ====================
 let CATEGORY_TREE = {};
 let ALL_CATEGORIES = [];
 let lastRequestTime = 0;
@@ -45,12 +43,8 @@ const USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.0.0 Safari/537.36"
 ];
 
-// ==================== 通用工具 ====================
 function splitConfigList(value) {
-    return String(value || "")
-        .split(/[;,]/)
-        .map(item => item.trim())
-        .filter(Boolean);
+    return String(value || "").split(/[;,]/).map(item => item.trim()).filter(Boolean);
 }
 
 function inferDriveTypeFromSourceName(name = "") {
@@ -129,7 +123,6 @@ function canUseServerProxy(context = {}) {
 function filterSourceNamesForCaller(sourceNames = [], callerSource = "", context = {}) {
     let filtered = Array.isArray(sourceNames) ? [...sourceNames] : [];
     const allowServerProxy = canUseServerProxy(context);
-
     if (callerSource === "web") {
         filtered = filtered.filter(name => name !== "本地代理");
     } else if (callerSource === "emby") {
@@ -139,22 +132,18 @@ function filterSourceNamesForCaller(sourceNames = [], callerSource = "", context
     } else if (callerSource === "uz") {
         filtered = filtered.filter(name => name !== "本地代理");
     }
-
     if (!allowServerProxy) {
         filtered = filtered.filter(name => name !== "服务端代理");
     }
-
     return filtered.length > 0 ? filtered : ["直连"];
 }
 
 function resolveRouteType(flag = "", callerSource = "", context = {}) {
     const allowServerProxy = canUseServerProxy(context);
     let routeType = "直连";
-
     if (callerSource === "web" || callerSource === "emby") {
         routeType = allowServerProxy ? "服务端代理" : "直连";
     }
-
     if (flag) {
         if (flag.includes("-")) {
             const parts = flag.split("-");
@@ -163,7 +152,6 @@ function resolveRouteType(flag = "", callerSource = "", context = {}) {
             routeType = flag;
         }
     }
-
     if (!allowServerProxy && routeType === "服务端代理") routeType = "直连";
     if (callerSource === "uz" && routeType === "本地代理") routeType = "直连";
     return routeType;
@@ -191,9 +179,7 @@ function inferDriveTypeFromResult(item = {}) {
 }
 
 function getPanCheckSelectedPlatforms() {
-    return splitConfigList(PANCHECK_PLATFORMS)
-        .map(p => normalizePanCheckPlatform(p))
-        .filter(Boolean);
+    return splitConfigList(PANCHECK_PLATFORMS).map(p => normalizePanCheckPlatform(p)).filter(Boolean);
 }
 
 function splitLinksByPanCheckPlatforms(links = []) {
@@ -223,7 +209,6 @@ function sortResultsByDriveOrder(results = []) {
     });
 }
 
-// ==================== 新增：文件信息提取工具 ====================
 function extractResolution(filename = "") {
     const lower = String(filename).toLowerCase();
     if (lower.includes("4k") || lower.includes("2160p")) return "  4K  ";
@@ -245,23 +230,14 @@ function formatSizeShort(size = 0) {
     return `${Math.round(s)}${units[i]}`;
 }
 
-// ==================== 盘搜API请求 ====================
 async function requestPansouAPI(params = {}) {
     if (!PANSOU_API) throw new Error("未配置 PANSOU_API 盘搜地址");
     const url = new URL(`${PANSOU_API}/api/search`);
-    const body = {
-        kw: params.keyword || "",
-        refresh: false,
-        res: "merge",
-        src: "all"
-    };
+    const body = { kw: params.keyword || "", refresh: false, res: "merge", src: "all" };
     if (PANSOU_CHANNELS) body.channels = PANSOU_CHANNELS.split(',');
     if (PANSOU_PLUGINS) body.plugins = PANSOU_PLUGINS.split(',');
     if (PANSOU_CLOUD_TYPES) body.cloud_types = splitConfigList(PANSOU_CLOUD_TYPES);
-    try {
-        body.filter = JSON.parse(PANSOU_FILTER);
-    }catch(e){}
-
+    try { body.filter = JSON.parse(PANSOU_FILTER); } catch(e){}
     const resp = await OmniBox.request(url.toString(), {
         method:"POST",
         headers:{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
@@ -286,12 +262,10 @@ function buildCacheKey(prefix, value) { return `${prefix}:${value}`; }
 async function getCachedJSON(key) { try{return await OmniBox.getCache(key);}catch(e){return null;} }
 async function setCachedJSON(key, val, sec) { try{await OmniBox.setCache(key,val,sec);}catch(e){} }
 
-// ==================== PanCheck 验活 ====================
 async function checkLinksWithPanCheck(links) {
     if (!PANCHECK_ENABLED || !PANCHECK_API || !links.length) return { invalidLinksSet:new Set(), stats:null };
     const { selectedPlatforms, linksToCheck, bypassLinks } = splitLinksByPanCheckPlatforms(links);
     if (!linksToCheck.length) return { invalidLinksSet:new Set(), stats:null };
-
     const reqBody = { links:linksToCheck };
     if (selectedPlatforms.length) reqBody.selected_platforms = selectedPlatforms;
     const apiUrl = PANCHECK_API.replace(/\/$/,"");
@@ -346,14 +320,12 @@ async function formatDriveSearchResults(data, keyword) {
             const images = item.images||[];
             const dt = String(item.datetime||"");
             if (!shareURL) continue;
-
             const cacheKey = buildCacheKey("pansou:driveInfo", shareURL);
             let driveInfo = await getCachedJSON(cacheKey);
             if (!driveInfo) {
                 driveInfo = await OmniBox.getDriveInfoByShareURL(shareURL);
                 await setCachedJSON(cacheKey, driveInfo, PANSOU_CACHE_EX_SECONDS);
             }
-
             const vodId = `${shareURL}|${keyword||""}|${note}`;
             const vodName = note || shareURL;
             const vodPic = Array.isArray(images)&&images.length?images[0]:driveInfo.iconUrl;
@@ -383,8 +355,7 @@ async function getAllVideoFiles(shareURL, files) {
     for (const f of files) {
         if (f.file && isVideoFile(f)) {
             res.push(f);
-        } else if (f.dir) {
-            try {
+        } else if (f.dir) {try {
                 const sub = await OmniBox.getDriveFileList(shareURL, f.fid);
                 if (sub && sub.files) res.push(...await getAllVideoFiles(shareURL, sub.files));
             }catch(e){}
@@ -393,20 +364,15 @@ async function getAllVideoFiles(shareURL, files) {
     return res;
 }
 
-// ==================== IKUN 基础函数 ====================
 async function req(params = {}) {
     const now = Date.now();
     if (now - lastRequestTime < REQUEST_DELAY) await new Promise(r=>setTimeout(r, REQUEST_DELAY - (now-lastRequestTime)));
     lastRequestTime = Date.now();
-
     const url = new URL(SITE_API);
     Object.entries(params).forEach(([k,v])=>v&&url.searchParams.append(k,v));
     const userAgent = USER_AGENTS[Math.floor(Math.random()*USER_AGENTS.length)];
     const resp = await OmniBox.request(url.href, {
-        headers:{
-            "User-Agent": userAgent,
-            "Referer": BASE_DOMAIN
-        }
+        headers:{ "User-Agent": userAgent, "Referer": BASE_DOMAIN }
     });
     return JSON.parse(resp.body);
 }
@@ -522,19 +488,16 @@ function parsePlay(from, url) {
     return res;
 }
 
-// ==================== 内部私有方法 ====================
 async function _getPanDetail(videoId, context, sourceIndex) {
     try {
         const parts = videoId.split("|");
         const shareURL = parts[0]||"";
         const keyword = parts[1]||"";
         if (!shareURL) return null;
-
         const source = resolveCallerSource({}, context);
         const ckInfo = buildCacheKey("pansou:driveInfo", shareURL);
         const ckFile = buildCacheKey("pansou:rootFiles", shareURL);
         const ckVideo = buildCacheKey("pansou:videoFiles", shareURL);
-
         let driveInfo = await getCachedJSON(ckInfo);
         let fileList = await getCachedJSON(ckFile);
         if (!driveInfo||!fileList) {
@@ -546,19 +509,16 @@ async function _getPanDetail(videoId, context, sourceIndex) {
             await setCachedJSON(ckFile, fileList, PANSOU_CACHE_EX_SECONDS);
         }
         if (!fileList||!fileList.files) return null;
-
         let allVideo = await getCachedJSON(ckVideo);
         if (!Array.isArray(allVideo)||!allVideo.length) {
             allVideo = await getAllVideoFiles(shareURL, fileList.files);
             await setCachedJSON(ckVideo, allVideo, PANSOU_CACHE_EX_SECONDS);
         }
-
         let sourceNames = ["直连"];
         if (DRIVE_TYPE_CONFIG.includes(driveInfo.driveType)) {
             sourceNames = [...SOURCE_NAMES_CONFIG];
             sourceNames = filterSourceNamesForCaller(sourceNames, source, context);
         }
-
         const playSources = [];
         for (const sn of sourceNames) {
             const eps = allVideo.map(file=>{
@@ -573,12 +533,10 @@ async function _getPanDetail(videoId, context, sourceIndex) {
                 };
             });
             if (eps.length) {
-                // 提取第一个文件的清晰度和大小
                 const firstFile = eps[0];
                 const resolution = extractResolution(firstFile.name);
                 const shortSize = formatSizeShort(firstFile.fileSize);
                 const driveShortName = formatDriveShortName(driveInfo.displayName);
-                // 生成线路名称：网盘X-网盘类型-清晰度-大小-代理方式
                 const sourceName = `☁️网盘${sourceIndex+1}-${driveShortName}-${resolution}-${shortSize}-${sn}`;
                 playSources.push({
                     name: sourceName,
@@ -595,18 +553,15 @@ async function _panPlay(params, context) {
     const flag = params.flag || "";
     const playId = params.playId || "";
     const source = resolveCallerSource(params, context);
-
     let mainPlayId = playId;
     let metaPart = "";
     const parts = mainPlayId.split("|");
     if (parts.length < 2) throw new Error("参数格式错误");
     const shareURL = parts[0]||"";
     const fileId = parts[1]||"";
-
     const routeType = resolveRouteType(flag, source, context);
     const playInfo = await OmniBox.getDriveVideoPlayInfo(shareURL, fileId, routeType);
     if (!playInfo||!playInfo.url||!playInfo.url.length) throw new Error("获取播放地址失败");
-
     const urlsResult = playInfo.url.map(item=>({name:item.name||"播放", url:item.url}));
     return {
         urls:urlsResult,
@@ -636,15 +591,10 @@ async function _ikunPlay(params) {
     return { urls:[{name:"播放", url:playId}], flag:params.flag||"", parse:1, header };
 }
 
-// ==================== 对外标准接口 ====================
 async function home(params, context) {
     await buildCategoryList();
     const data = await req({ac:"list",pg:1,pagesize:PAGE_LIMIT});
-    return {
-        class:ALL_CATEGORIES,
-        list:await fmt(data.list||[]),
-        filters:buildFilters()
-    };
+    return { class:ALL_CATEGORIES, list:await fmt(data.list||[]), filters:buildFilters() };
 }
 
 async function category(params) {
@@ -657,7 +607,6 @@ async function category(params) {
     let selectedCate = categoryId;
     if (filter.cate) selectedCate = filter.cate;
     else if (childList.length) selectedCate = childList[0].value;
-
     const data = await req({t:selectedCate, pg:page, pagesize:PAGE_LIMIT});
     return {
         page:parseInt(data.page)||1,
@@ -689,7 +638,6 @@ async function detail(params, context) {
         const videoName = ikunItem.vod_name||"";
         const officialSrc = parsePlay(ikunItem.vod_play_from, ikunItem.vod_play_url);
         officialSrc.forEach(s=>s.name = `🎬官方-${s.name}`);
-
         let panSrc = [];
         if (PANSOU_API && videoName) {
             try {
@@ -703,13 +651,10 @@ async function detail(params, context) {
                     }
                 }
                 const panRes = await formatDriveSearchResults(filterData, videoName);
-                
-                // 遍历所有盘搜源，合并所有线路
                 const allPanSources = [];
                 for (let i = 0; i < panRes.length; i++) {
                     const panItem = panRes[i];
                     try {
-                        // 传入sourceIndex生成带序号的线路名称
                         const panDetail = await _getPanDetail(panItem.vod_id, context, i);
                         if (panDetail && panDetail.list.length > 0) {
                             const sources = panDetail.list[0].vod_play_sources || [];
@@ -725,12 +670,8 @@ async function detail(params, context) {
                 OmniBox.log("warn", `网盘资源搜索失败: ${e.message}`);
             }
         }
-
-        // 🔥 网盘线路按文件大小降序排序（大的在前）
         panSrc.sort((a, b) => (b.fileSize || 0) - (a.fileSize || 0));
-        // 🔥 合并顺序：网盘线路在前，官方线路在后
         const allSrc = [...panSrc, ...officialSrc];
-
         return {
             list:[{
                 vod_id:videoId,
