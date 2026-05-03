@@ -1,8 +1,8 @@
-// @name TV-小鸡资源
+// @name TV-金鹰采集网
 // @author
 // @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
 // @version 0.0.1
-// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_%E5%B0%8F%E9%B8%A1.js
+// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_TV-%E9%87%91%E9%B9%B0%E9%87%87%E9%9B%86%E7%BD%91.js
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
 const axios = require("axios");
@@ -23,8 +23,8 @@ const EXTERNAL_SERVER_PROXY_ENABLED = String(process.env.EXTERNAL_SERVER_PROXY_E
 const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "quark;baidu;a139;a189;a123;a115;xunlei;ali;uc").map(s => s.toLowerCase());
 const PANSOU_CACHE_EX_SECONDS = Number(process.env.PANSOU_CACHE_EX_SECONDS || 43200);
 
-const SITE_API = "https://api.xiaojizy.live/provide/vod";
-const BASE_DOMAIN = "https://api.xiaojizy.live";
+const SITE_API = "https://jyzyapi.com/provide/vod";
+const BASE_DOMAIN = "https://jyzyapi.com";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
 

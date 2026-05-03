@@ -1,8 +1,8 @@
-// @name TV-大地资源网络
+// @name TV-黄色资源
 // @author
 // @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
 // @version 0.0.1
-// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_%E5%A4%A7%E5%9C%B0.js
+// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_AV-%E9%BB%84%E8%89%B2.js
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
 const axios = require("axios");
@@ -23,8 +23,8 @@ const EXTERNAL_SERVER_PROXY_ENABLED = String(process.env.EXTERNAL_SERVER_PROXY_E
 const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "quark;baidu;a139;a189;a123;a115;xunlei;ali;uc").map(s => s.toLowerCase());
 const PANSOU_CACHE_EX_SECONDS = Number(process.env.PANSOU_CACHE_EX_SECONDS || 43200);
 
-const SITE_API = "https://dadiapi.com/api.php/provide/vod";
-const BASE_DOMAIN = "https://dadiapi.com";
+const SITE_API = "https://hsckzy888.com/api.php/provide/vod";
+const BASE_DOMAIN = "https://hsckzy888.com";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
 

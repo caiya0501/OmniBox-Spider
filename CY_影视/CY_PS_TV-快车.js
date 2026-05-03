@@ -1,9 +1,8 @@
-// @name 极速影视
+// @name TV-快车资源
 // @author
-// @description 网盘线路按文件大小降序，名称含清晰度+大小，官方线路后置
-// @description 极速接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
+// @description IKUN接口展示影视分类/首页/搜索，详情自动匹配网盘资源，官方播放+网盘播放双源共存，无网盘自动兜底原链接
 // @version 0.0.1
-// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_%E6%9E%81%E9%80%9F.js
+// @downloadURL https://raw.githubusercontent.com/caiya0501/OmniBox-Spider/refs/heads/main/CY_%E5%BD%B1%E8%A7%86/CY_PS_TV-%E5%BF%85%E8%BD%A6.js
 const OmniBox = require("omnibox_sdk");
 const querystring = require('querystring');
 const axios = require("axios");
@@ -24,8 +23,8 @@ const EXTERNAL_SERVER_PROXY_ENABLED = String(process.env.EXTERNAL_SERVER_PROXY_E
 const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "quark;baidu;a139;a189;a123;a115;xunlei;ali;uc").map(s => s.toLowerCase());
 const PANSOU_CACHE_EX_SECONDS = Number(process.env.PANSOU_CACHE_EX_SECONDS || 43200);
 
-const SITE_API = "https://jszyapi.com/api.php/provide/vod";
-const BASE_DOMAIN = "https://jszyapi.com";
+const SITE_API = "https://caiji.kuaichezy.org/api.php/provide";
+const BASE_DOMAIN = "https://caiji.kuaichezy.org";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
 
@@ -223,6 +222,7 @@ function sortResultsByDriveOrder(results = []) {
     });
 }
 
+// ==================== 新增：文件信息提取工具 ====================
 function extractResolution(filename = "") {
     const lower = String(filename).toLowerCase();
     if (lower.includes("4k") || lower.includes("2160p")) return "  4K  ";
@@ -244,6 +244,7 @@ function formatSizeShort(size = 0) {
     return `${Math.round(s)}${units[i]}`;
 }
 
+// ==================== 盘搜API请求 ====================
 async function requestPansouAPI(params = {}) {
     if (!PANSOU_API) throw new Error("未配置 PANSOU_API 盘搜地址");
     const url = new URL(`${PANSOU_API}/api/search`);
@@ -284,6 +285,7 @@ function buildCacheKey(prefix, value) { return `${prefix}:${value}`; }
 async function getCachedJSON(key) { try{return await OmniBox.getCache(key);}catch(e){return null;} }
 async function setCachedJSON(key, val, sec) { try{await OmniBox.setCache(key,val,sec);}catch(e){} }
 
+// ==================== PanCheck 验活 ====================
 async function checkLinksWithPanCheck(links) {
     if (!PANCHECK_ENABLED || !PANCHECK_API || !links.length) return { invalidLinksSet:new Set(), stats:null };
     const { selectedPlatforms, linksToCheck, bypassLinks } = splitLinksByPanCheckPlatforms(links);
@@ -390,6 +392,7 @@ async function getAllVideoFiles(shareURL, files) {
     return res;
 }
 
+// ==================== IKUN 基础函数 ====================
 async function req(params = {}) {
     const now = Date.now();
     if (now - lastRequestTime < REQUEST_DELAY) await new Promise(r=>setTimeout(r, REQUEST_DELAY - (now-lastRequestTime)));
@@ -518,6 +521,7 @@ function parsePlay(from, url) {
     return res;
 }
 
+// ==================== 内部私有方法 ====================
 async function _getPanDetail(videoId, context, sourceIndex) {
     try {
         const parts = videoId.split("|");
@@ -629,6 +633,7 @@ async function _ikunPlay(params) {
     return { urls:[{name:"播放", url:playId}], flag:params.flag||"", parse:1, header };
 }
 
+// ==================== 对外标准接口 ====================
 async function home(params, context) {
     await buildCategoryList();
     const data = await req({ac:"list",pg:1,pagesize:PAGE_LIMIT});
@@ -695,7 +700,7 @@ async function detail(params, context) {
                     }
                 }
                 const panRes = await formatDriveSearchResults(filterData, videoName);
-                
+
                 const allPanSources = [];
                 for (let i = 0; i < panRes.length; i++) {
                     const panItem = panRes[i];
