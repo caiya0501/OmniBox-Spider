@@ -24,7 +24,7 @@ const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "quark;baidu;a139
 const PANSOU_CACHE_EX_SECONDS = Number(process.env.PANSOU_CACHE_EX_SECONDS || 43200);
 
 const SITE_API = "https://www.mdzyapi.com/api.php/provide/vod";
-const BASE_DOMAIN = "https://www.mdzyapi.com";
+const BASE_DOMAIN = "https://moduzy1.com";
 const PAGE_LIMIT = 20;
 const REQUEST_DELAY = 500;
 
